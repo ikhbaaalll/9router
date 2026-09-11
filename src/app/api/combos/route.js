@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { normalizeComboSteps } from "@/shared/utils/comboSteps.js";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,14 @@ export async function POST(request) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
     }
 
-    const combo = await createCombo({ name, models: models || [], kind: kind || null });
+    // Normalize members: legacy "provider/model" strings stay strings, step objects
+    // ({ model, connectionId }) keep their pinned account.
+    const normalized = normalizeComboSteps(models || []);
+    if (normalized.error) {
+      return NextResponse.json({ error: normalized.error }, { status: 400 });
+    }
+
+    const combo = await createCombo({ name, models: normalized.models, kind: kind || null });
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {

@@ -12,6 +12,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat } from "open-sse/services/combo.js";
+import { comboStepConnectionId } from "@/shared/utils/comboSteps.js";
 import * as log from "../utils/logger.js";
 
 // Providers that don't require credentials (noAuth)
@@ -56,7 +57,12 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId }),
+      handleSingleModel: (b, m, step) => handleSingleModelImage(b, m, {
+        wantsStream,
+        binaryOutput,
+        // A combo step's pinned account wins over the request-level x-connection-id header.
+        preferredConnectionId: comboStepConnectionId(step) || preferredConnectionId,
+      }),
       log,
       comboName: modelStr,
       comboStrategy,

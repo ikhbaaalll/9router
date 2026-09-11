@@ -32,7 +32,7 @@ describe("fusion combo", () => {
 
   it("fans out to the panel then routes a synthesis turn to the judge", async () => {
     const seen = [];
-    const handleSingleModel = vi.fn(async (body, model, isPanel) => {
+    const handleSingleModel = vi.fn(async (body, model, _step, isPanel) => {
       seen.push(model);
       if (model === "p/judge") return okResponse("FINAL");
       return okResponse(`ans-${model}`);
@@ -51,15 +51,17 @@ describe("fusion combo", () => {
     expect(seen.slice(0, 3).sort()).toEqual(["p/a", "p/b", "p/c"]);
     expect(seen[3]).toBe("p/judge");
 
-    // Panel calls are non-streaming with tools stripped.
-    for (const [body, model, isPanel] of handleSingleModel.mock.calls.filter(([, m]) => m !== "p/judge")) {
+    // Panel calls are non-streaming with tools stripped. The step argument is the
+    // panel member itself; isPanel is the 4th argument.
+    for (const [body, model, step, isPanel] of handleSingleModel.mock.calls.filter(([, m]) => m !== "p/judge")) {
       expect(body.stream).toBe(false);
       expect(body.tools).toBeUndefined();
+      expect(step).toBe(model);
       expect(isPanel).toBe(true);
     }
 
     // Judge call carries every panel answer + keeps the client's stream flag.
-    const [judgeBody, , isPanel] = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
+    const [judgeBody, , , isPanel] = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
     const judgeText = judgeBody.messages.at(-1).content;
     expect(judgeText).toContain("ans-p/a");
     expect(judgeText).toContain("ans-p/b");
@@ -161,7 +163,7 @@ describe("fusion combo", () => {
     });
 
     // Panel calls keep every turn but tool turns are flattened to assistant prose.
-    const panelCalls = handleSingleModel.mock.calls.filter(([,, isPanel]) => isPanel === true);
+    const panelCalls = handleSingleModel.mock.calls.filter(([,,, isPanel]) => isPanel === true);
     expect(panelCalls.length).toBe(2);
     for (const [panelBody] of panelCalls) {
       expect(panelBody.tools).toBeUndefined();
@@ -200,7 +202,7 @@ describe("fusion combo", () => {
       judgeModel: "p/judge"
     });
 
-    const panelCalls = handleSingleModel.mock.calls.filter(([,, isPanel]) => isPanel === true);
+    const panelCalls = handleSingleModel.mock.calls.filter(([,,, isPanel]) => isPanel === true);
     expect(panelCalls.length).toBe(2);
     const panelBody = panelCalls[0][0];
     

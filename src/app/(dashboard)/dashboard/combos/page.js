@@ -9,6 +9,8 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
+import { comboStepTarget, comboStepConnectionId } from "@/shared/utils/comboSteps.js";
+import { ComboBuilder } from "@/shared/components";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -568,10 +570,14 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
+  // A member is a string or a step object; capability aggregation works on the string
+  // form. comboByName resolves NESTED combo names; the self entry pins this combo's own
+  // members so a combo named after itself does not recurse into the stale parent list.
+  const memberIds = combo.models.map(comboStepTarget).filter(Boolean);
   // The synced catalog is server-only, so resolving here would fall back to the
   // generic patterns and under-report the limits. getCaps carries the server's
   // answer for /api/models.
-  const comboCaps = aggregateComboCapabilities(combo.models, comboByName, getCaps);
+  const comboCaps = aggregateComboCapabilities(memberIds, { ...comboByName, [combo.name]: memberIds }, getCaps);
 
   return (
     <Card padding="sm" className={`group ${selected ? "ring-1 ring-primary/40 bg-primary/[0.03]" : ""}`}>
@@ -596,16 +602,26 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
               ) : (
-                combo.models.slice(0, 3).map((model, index) => (
-                  <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
-                    <span>{model}</span>
-                    <CapacityBadges caps={
-                      comboByName[model]
-                        ? aggregateComboCapabilities(comboByName[model], comboByName, getCaps)
-                        : getCaps?.(model)
-                    } />
-                  </code>
-                ))
+                combo.models.slice(0, 3).map((model, index) => {
+                  const target = comboStepTarget(model);
+                  const accountId = comboStepConnectionId(model);
+                  return (
+                    <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
+                      <span>{target}</span>
+                      {accountId && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-primary" title={`Pinned account: ${accountId}`}>
+                          <span className="material-symbols-outlined text-[11px]">account_circle</span>
+                          {model?.label || accountId.slice(0, 8)}
+                        </span>
+                      )}
+                      <CapacityBadges caps={
+                        comboByName[target]
+                          ? aggregateComboCapabilities(comboByName[target], comboByName, getCaps)
+                          : getCaps?.(target)
+                      } />
+                    </code>
+                  );
+                })
               )}
               {combo.models.length > 3 && (
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
@@ -628,7 +644,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
                   title="Pick the model that fuses panel answers"
                 >
                   <span className="material-symbols-outlined text-[13px]">gavel</span>
-                  <span className="truncate">{judge || `Auto — ${combo.models[0] || "first model"}`}</span>
+                  <span className="truncate">{judge || `Auto — ${comboStepTarget(combo.models[0]) || "first model"}`}</span>
                 </button>
                 {judge && (
                   <button
