@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import Modal from "./Modal";
 import Input from "./Input";
 import Button from "./Button";
@@ -30,8 +34,15 @@ function withConnection(entry, connectionId, label) {
   return { model: target, connectionId, ...(label ? { label } : {}) };
 }
 
-// Inline editable model item with an account picker.
-function ModelItem({ index, entry, accounts, isFirst, isLast, onEdit, onAccountChange, onDuplicate, onMoveUp, onMoveDown, onRemove }) {
+// One combo member row: drag to reorder, inline-edit the model, pick the account.
+function ModelItem({ id, index, entry, accounts, isFirst, isLast, onEdit, onAccountChange, onDuplicate, onMoveUp, onMoveDown, onRemove }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    // no transition — prevents the CSS settle animation fighting React's re-render on drop
+    opacity: isDragging ? 0.4 : 1,
+    zIndex: isDragging ? 999 : undefined,
+  };
   const [editing, setEditing] = useState(false);
   const model = comboStepTarget(entry);
   const pinnedConnectionId = comboStepConnectionId(entry) || "";
@@ -51,8 +62,26 @@ function ModelItem({ index, entry, accounts, isFirst, isLast, onEdit, onAccountC
   const pinnedMissing = pinnedConnectionId && !accounts.some((a) => a.id === pinnedConnectionId);
 
   return (
-    <div className="group flex min-w-0 flex-col gap-1 rounded-md bg-black/[0.02] px-2 py-1 transition-colors hover:bg-black/[0.04] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`group flex min-w-0 flex-col gap-1 rounded-md bg-black/[0.02] px-2 py-1 transition-colors hover:bg-black/[0.04] dark:bg-white/[0.02] dark:hover:bg-white/[0.04] ${isDragging ? "shadow-md ring-1 ring-primary/30" : ""}`}
+    >
       <div className="flex min-w-0 items-center gap-1.5">
+        {/* Drag handle */}
+        <button
+          {...attributes}
+          {...listeners}
+          type="button"
+          className="cursor-grab touch-none p-0.5 rounded text-text-muted hover:text-primary active:cursor-grabbing shrink-0"
+          title="Drag to reorder"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="4" r="2"/><circle cx="15" cy="4" r="2"/>
+            <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
+            <circle cx="9" cy="20" r="2"/><circle cx="15" cy="20" r="2"/>
+          </svg>
+        </button>
         <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{index + 1}</span>
         {editing ? (
           <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={handleKeyDown}
@@ -118,6 +147,25 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
   const [nameError, setNameError] = useState("");
   const [modelAliases, setModelAliases] = useState({});
   const [connections, setConnections] = useState([]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  // Stable index-based IDs so duplicates and similar names are handled correctly.
+  const modelItems = models.map((entry, i) => ({ uid: `item-${i}`, entry }));
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = modelItems.findIndex((m) => m.uid === active.id);
+      const newIndex = modelItems.findIndex((m) => m.uid === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        setModels((prev) => arrayMove(prev, oldIndex, newIndex));
+      }
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -237,19 +285,23 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
                 <p className="text-xs text-text-muted">No models added yet</p>
               </div>
             ) : (
-              <div className="flex max-h-[55vh] min-w-0 flex-col gap-1 overflow-y-auto sm:max-h-[350px]">
-                {models.map((entry, index) => (
-                  <ModelItem key={index} index={index} entry={entry}
-                    accounts={accountsFor(entry)}
-                    isFirst={index === 0} isLast={index === models.length - 1}
-                    onEdit={(v) => handleEditModel(index, v)}
-                    onAccountChange={(connectionId, label) => handleAccountChange(index, connectionId, label)}
-                    onDuplicate={() => handleDuplicate(index)}
-                    onMoveUp={() => handleMoveUp(index)}
-                    onMoveDown={() => handleMoveDown(index)}
-                    onRemove={() => handleRemoveModel(index)} />
-                ))}
-              </div>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
+                <SortableContext items={modelItems.map((m) => m.uid)} strategy={verticalListSortingStrategy}>
+                  <div className="flex max-h-[55vh] min-w-0 flex-col gap-1 overflow-y-auto sm:max-h-[350px]">
+                    {modelItems.map(({ uid, entry }, index) => (
+                      <ModelItem key={uid} id={uid} index={index} entry={entry}
+                        accounts={accountsFor(entry)}
+                        isFirst={index === 0} isLast={models.length - 1}
+                        onEdit={(v) => handleEditModel(index, v)}
+                        onAccountChange={(connectionId, label) => handleAccountChange(index, connectionId, label)}
+                        onDuplicate={() => handleDuplicate(index)}
+                        onMoveUp={() => handleMoveUp(index)}
+                        onMoveDown={() => handleMoveDown(index)}
+                        onRemove={() => handleRemoveModel(index)} />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )}
             <p className="text-[10px] text-text-muted mt-1">
               Pick an account to pin a member to one provider account — leave it on Auto to spread requests across the pool.
