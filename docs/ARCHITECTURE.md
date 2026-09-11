@@ -239,6 +239,30 @@ flowchart TD
 
 Fallback decisions are driven by `open-sse/services/accountFallback.js` using status codes and error-message heuristics.
 
+### Combo members and per-member account pins
+
+A combo member is stored in `combos.models` as either a plain `"provider/model"` string or a
+step object that pins WHICH account the member must use:
+
+```json
+["cmd/deepseek/deepseek-v4-flash",
+ { "model": "cmd/deepseek/deepseek-v4-flash", "connectionId": "b0f1…", "label": "work" }]
+```
+
+- Helpers live in `src/shared/utils/comboSteps.js` (`comboStepTarget`, `comboStepConnectionId`,
+  `normalizeComboSteps`). The object shape mirrors OmniRoute's combo step schema, so a combo can
+  move between the two gateways unchanged.
+- `handleComboChat` / `handleFusionChat` hand each member to `handleSingleModel(body, modelStr,
+  step, isPanel)`. The step travels with the member, so the pin survives fallback, rotation,
+  capability reordering and fusion panel fan-out.
+- The pin reaches credential selection as `preferredConnectionId`
+  (`src/sse/services/auth.js::getProviderCredentials`). The same option is already used by the
+  image/video handlers via the `x-connection-id` header.
+- A pin is a preference, never a wall: an inactive, model-locked or just-failed account drops out
+  of the candidate list and the normal pool strategy picks the next account.
+- A member without a pin stores as a plain string, so combos written before this change keep
+  working, and `getRotatedModels` / `reorderByCapabilities` treat both forms alike.
+
 ## OAuth Onboarding and Token Refresh Lifecycle
 
 ```mermaid

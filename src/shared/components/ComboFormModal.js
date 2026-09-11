@@ -1,16 +1,40 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Modal from "./Modal";
 import Input from "./Input";
 import Button from "./Button";
 import ModelSelectModal from "./ModelSelectModal";
+import { comboStepTarget, comboStepConnectionId } from "@/shared/utils/comboSteps.js";
 
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
-// Inline editable model item
-function ModelItem({ index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
+// Display name for an account row (name → email → short id).
+function connectionLabel(conn) {
+  return conn.name || conn.email || conn.id?.slice(0, 8) || "unnamed";
+}
+
+// A combo member is a model string, or a step object when an account is pinned:
+// { model: "provider/model", connectionId, label }. These two helpers rewrite one
+// field without dropping the other.
+function withTarget(entry, target) {
+  const connectionId = comboStepConnectionId(entry);
+  if (!connectionId) return target;
+  const label = typeof entry?.label === "string" ? entry.label : "";
+  return { model: target, connectionId, ...(label ? { label } : {}) };
+}
+
+function withConnection(entry, connectionId, label) {
+  const target = comboStepTarget(entry);
+  if (!connectionId) return target;
+  return { model: target, connectionId, ...(label ? { label } : {}) };
+}
+
+// Inline editable model item with an account picker.
+function ModelItem({ index, entry, accounts, isFirst, isLast, onEdit, onAccountChange, onDuplicate, onMoveUp, onMoveDown, onRemove }) {
   const [editing, setEditing] = useState(false);
+  const model = comboStepTarget(entry);
+  const pinnedConnectionId = comboStepConnectionId(entry) || "";
   const [draft, setDraft] = useState(model);
   const commit = () => {
     const trimmed = draft.trim();
@@ -22,29 +46,61 @@ function ModelItem({ index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown
     if (e.key === "Enter") commit();
     if (e.key === "Escape") { setDraft(model); setEditing(false); }
   };
+
+  // Accounts belong to a provider, so a pin only makes sense while the provider holds.
+  const pinnedMissing = pinnedConnectionId && !accounts.some((a) => a.id === pinnedConnectionId);
+
   return (
-    <div className="group flex min-w-0 items-center gap-1.5 rounded-md bg-black/[0.02] px-2 py-1 transition-colors hover:bg-black/[0.04] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]">
-      <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{index + 1}</span>
-      {editing ? (
-        <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={handleKeyDown}
-          className="min-w-0 flex-1 rounded border border-primary/40 bg-white px-1.5 py-0.5 font-mono text-xs text-text-main outline-none dark:bg-black/20" />
-      ) : (
-        <div className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5"
-          onClick={() => setEditing(true)} title="Click to edit">{model}</div>
-      )}
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button onClick={onMoveUp} disabled={isFirst}
-          className={`p-0.5 rounded ${isFirst ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`} title="Move up">
-          <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
-        </button>
-        <button onClick={onMoveDown} disabled={isLast}
-          className={`p-0.5 rounded ${isLast ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`} title="Move down">
-          <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
+    <div className="group flex min-w-0 flex-col gap-1 rounded-md bg-black/[0.02] px-2 py-1 transition-colors hover:bg-black/[0.04] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{index + 1}</span>
+        {editing ? (
+          <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={handleKeyDown}
+            className="min-w-0 flex-1 rounded border border-primary/40 bg-white px-1.5 py-0.5 font-mono text-xs text-text-main outline-none dark:bg-black/20" />
+        ) : (
+          <div className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5"
+            onClick={() => setEditing(true)} title="Click to edit">{model}</div>
+        )}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button onClick={onDuplicate} className="p-0.5 rounded text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5" title="Duplicate (same model, other account)">
+            <span className="material-symbols-outlined text-[12px]">content_copy</span>
+          </button>
+          <button onClick={onMoveUp} disabled={isFirst}
+            className={`p-0.5 rounded ${isFirst ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`} title="Move up">
+            <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
+          </button>
+          <button onClick={onMoveDown} disabled={isLast}
+            className={`p-0.5 rounded ${isLast ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`} title="Move down">
+            <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
+          </button>
+        </div>
+        <button onClick={onRemove} className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 transition-all" title="Remove">
+          <span className="material-symbols-outlined text-[12px]">close</span>
         </button>
       </div>
-      <button onClick={onRemove} className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 transition-all" title="Remove">
-        <span className="material-symbols-outlined text-[12px]">close</span>
-      </button>
+
+      <div className="flex min-w-0 items-center gap-1.5 pl-[18px]">
+        <span className="material-symbols-outlined text-[12px] text-text-muted shrink-0">account_circle</span>
+        <select
+          value={pinnedConnectionId}
+          onChange={(e) => {
+            const id = e.target.value;
+            const account = accounts.find((a) => a.id === id);
+            onAccountChange(id, account ? connectionLabel(account) : "");
+          }}
+          className="min-w-0 flex-1 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-black/20 px-1.5 py-0.5 text-[11px] text-text-main outline-none focus:border-primary"
+          title="Which account of this provider the combo member must use"
+        >
+          <option value="">Auto — any active account</option>
+          {pinnedMissing && <option value={pinnedConnectionId}>{pinnedConnectionId.slice(0, 8)} (missing)</option>}
+          {accounts.map((account) => (
+            <option key={account.id} value={account.id}>{connectionLabel(account)}</option>
+          ))}
+        </select>
+        {accounts.length === 0 && (
+          <span className="text-[10px] text-text-muted shrink-0" title="No account registered for this provider">no accounts</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -61,11 +117,33 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
   const [modelAliases, setModelAliases] = useState({});
+  const [connections, setConnections] = useState([]);
 
   useEffect(() => {
     if (!isOpen) return;
     fetch("/api/models/alias").then((r) => r.ok ? r.json() : null).then((d) => d && setModelAliases(d.aliases || {})).catch(() => {});
+    // Accounts offered per combo member. Fail-open: no list → "Auto" only.
+    fetch("/api/providers").then((r) => r.ok ? r.json() : null)
+      .then((d) => setConnections((d?.connections || []).filter((c) => c.isActive !== false)))
+      .catch(() => {});
   }, [isOpen]);
+
+  // Accounts grouped by provider id, so one row only offers its own provider's accounts.
+  const accountsByProvider = useMemo(() => {
+    const map = {};
+    for (const conn of connections) {
+      if (!conn?.provider || !conn?.id) continue;
+      (map[conn.provider] ||= []).push(conn);
+    }
+    return map;
+  }, [connections]);
+
+  const accountsFor = (entry) => {
+    const target = comboStepTarget(entry);
+    const slash = target.indexOf("/");
+    const provider = slash > 0 ? target.slice(0, slash) : "";
+    return provider ? (accountsByProvider[provider] || []) : [];
+  };
 
   const validateName = (value) => {
     if (!value.trim()) { setNameError("Name is required"); return false; }
@@ -84,12 +162,32 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
   };
 
   const handleAddModel = (model) => {
-    if (!models.includes(model.value)) setModels([...models, model.value]);
+    if (!models.some((m) => comboStepTarget(m) === model.value)) setModels([...models, model.value]);
   };
   const handleDeselectModel = (model) => {
-    setModels(models.filter((m) => m !== model.value));
+    setModels(models.filter((m) => comboStepTarget(m) !== model.value));
   };
   const handleRemoveModel = (i) => setModels(models.filter((_, idx) => idx !== i));
+  const handleEditModel = (i, target) => {
+    const a = [...models];
+    const pinned = comboStepConnectionId(a[i]);
+    const pinnedAccount = pinned ? accountsFor(a[i]).find((c) => c.id === pinned) : null;
+    const slash = target.indexOf("/");
+    const newProvider = slash > 0 ? target.slice(0, slash) : "";
+    // Keep the pin only while the edited model stays on the pinned account's provider.
+    a[i] = pinnedAccount && newProvider === pinnedAccount.provider ? withTarget(a[i], target) : target;
+    setModels(a);
+  };
+  const handleAccountChange = (i, connectionId, label) => {
+    const a = [...models];
+    a[i] = withConnection(a[i], connectionId, label);
+    setModels(a);
+  };
+  const handleDuplicate = (i) => {
+    const a = [...models];
+    a.splice(i + 1, 0, a[i]);
+    setModels(a);
+  };
   const handleMoveUp = (i) => {
     if (i === 0) return;
     const a = [...models]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; setModels(a);
@@ -140,16 +238,22 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
               </div>
             ) : (
               <div className="flex max-h-[55vh] min-w-0 flex-col gap-1 overflow-y-auto sm:max-h-[350px]">
-                {models.map((model, index) => (
-                  <ModelItem key={index} index={index} model={model}
+                {models.map((entry, index) => (
+                  <ModelItem key={index} index={index} entry={entry}
+                    accounts={accountsFor(entry)}
                     isFirst={index === 0} isLast={index === models.length - 1}
-                    onEdit={(v) => { const a = [...models]; a[index] = v; setModels(a); }}
+                    onEdit={(v) => handleEditModel(index, v)}
+                    onAccountChange={(connectionId, label) => handleAccountChange(index, connectionId, label)}
+                    onDuplicate={() => handleDuplicate(index)}
                     onMoveUp={() => handleMoveUp(index)}
                     onMoveDown={() => handleMoveDown(index)}
                     onRemove={() => handleRemoveModel(index)} />
                 ))}
               </div>
             )}
+            <p className="text-[10px] text-text-muted mt-1">
+              Pick an account to pin a member to one provider account — leave it on Auto to spread requests across the pool.
+            </p>
             <button onClick={() => setShowModelSelect(true)}
               className="w-full mt-2 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:text-primary hover:border-primary/50 transition-colors flex items-center justify-center gap-1">
               <span className="material-symbols-outlined text-[16px]">add</span>
@@ -171,7 +275,7 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
           onSelect={handleAddModel} onDeselect={handleDeselectModel}
           activeProviders={activeProviders} modelAliases={modelAliases}
           title="Add Model to Combo" kindFilter={kindFilter}
-          addedModelValues={models} closeOnSelect={false} />
+          addedModelValues={models.map(comboStepTarget)} closeOnSelect={false} />
       )}
     </>
   );

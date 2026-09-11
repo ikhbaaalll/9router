@@ -91,6 +91,9 @@ describe("web fetch account state", () => {
       "jina-reader",
       expect.any(Set),
       "webfetch:jina-reader",
+      // 4th argument carries the pinned account of the combo member in play
+      // (null when the member is not pinned).
+      { preferredConnectionId: null },
     );
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });

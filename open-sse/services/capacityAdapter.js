@@ -9,6 +9,7 @@
  * never overrides a combo that already has a member covering the capability.
  */
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
+import { comboStepTarget } from "@/shared/utils/comboSteps.js";
 
 const CAPABILITY_KEYS = ["vision", "pdf", "audioInput", "videoInput"];
 const HARD_CAPS = new Set(CAPABILITY_KEYS);
@@ -76,9 +77,11 @@ export function getActiveAdapterStrategy(requiredCapabilities, settings) {
 }
 
 function modelSatisfies(modelStr, requiredHard) {
-  const slash = modelStr.indexOf("/");
-  const provider = slash > 0 ? modelStr.slice(0, slash) : "";
-  const model = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
+  // Combo members may be step objects with a pinned account — read the model string.
+  const target = comboStepTarget(modelStr);
+  const slash = target.indexOf("/");
+  const provider = slash > 0 ? target.slice(0, slash) : "";
+  const model = slash > 0 ? target.slice(slash + 1) : target;
   const caps = getCapabilitiesForModel(provider, model);
   return requiredHard.every((c) => caps[c] === true);
 }

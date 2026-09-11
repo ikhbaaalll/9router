@@ -1,3 +1,8 @@
+# Unreleased
+
+## Features
+- **Combos**: pin a specific account to a combo member — a member may be a plain `"provider/model"` string or a step object `{ model, connectionId, label }` (`src/shared/utils/comboSteps.js`, shape ported from OmniRoute). The pin travels through fallback, round-robin, capability reordering and fusion fan-out, and reaches credential selection as `preferredConnectionId`; an unavailable pinned account falls back to the normal pool instead of failing the request. Dashboard: per-member account picker in the combo modal, pin badge in the combo list, `@account` in media-combo chips. Pins apply to chat, image, TTS, web search and web fetch combos.
+
 # v0.5.75 (2026-09-10)
 
 ## Features

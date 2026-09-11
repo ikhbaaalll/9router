@@ -9,6 +9,7 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { comboStepTarget, comboStepConnectionId } from "@/shared/utils/comboSteps.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -313,12 +314,22 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
               ) : (
-                combo.models.slice(0, 3).map((model, index) => (
-                  <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
-                    <span>{model}</span>
-                    <CapacityBadges caps={getCaps?.(model)} />
-                  </code>
-                ))
+                combo.models.slice(0, 3).map((model, index) => {
+                  const target = comboStepTarget(model);
+                  const accountId = comboStepConnectionId(model);
+                  return (
+                    <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
+                      <span>{target}</span>
+                      {accountId && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-primary" title={`Pinned account: ${accountId}`}>
+                          <span className="material-symbols-outlined text-[11px]">account_circle</span>
+                          {model?.label || accountId.slice(0, 8)}
+                        </span>
+                      )}
+                      <CapacityBadges caps={getCaps?.(target)} />
+                    </code>
+                  );
+                })
               )}
               {combo.models.length > 3 && (
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
@@ -334,7 +345,7 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                   title="Pick the model that fuses panel answers"
                 >
                   <span className="material-symbols-outlined text-[13px]">gavel</span>
-                  <span className="truncate">{judge || `Auto — ${combo.models[0] || "first model"}`}</span>
+                  <span className="truncate">{judge || `Auto — ${comboStepTarget(combo.models[0]) || "first model"}`}</span>
                 </button>
                 {judge && (
                   <button

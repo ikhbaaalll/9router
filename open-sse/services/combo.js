@@ -6,6 +6,7 @@ import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
+import { comboStepTarget, comboStepConnectionId, comboStepDisplay } from "@/shared/utils/comboSteps.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -66,9 +67,10 @@ export function reorderByCapabilities(models, required) {
   const soft = [...required].filter((c) => !HARD_CAPS.has(c));
 
   const tierOf = (m) => {
-    const slash = typeof m === "string" ? m.indexOf("/") : -1;
-    const provider = slash > 0 ? m.slice(0, slash) : "";
-    const model = slash > 0 ? m.slice(slash + 1) : m;
+    const modelStr = comboStepTarget(m);
+    const slash = modelStr.indexOf("/");
+    const provider = slash > 0 ? modelStr.slice(0, slash) : "";
+    const model = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
     const caps = getCapabilitiesForModel(provider, model);
     if (!hard.every((c) => caps[c] === true)) return 2;
     return soft.every((c) => caps[c] === true) ? 0 : 1;
@@ -249,7 +251,7 @@ export function resetComboRotation(comboName) {
  * Get combo models from combos data
  * @param {string} modelStr - Model string to check
  * @param {Array|Object} combosData - Array of combos or object with combos
- * @returns {string[]|null} Array of models or null if not a combo
+ * @returns {Array<string|Object>|null} Combo members or null if not a combo
  */
 export function getComboModelsFromData(modelStr, combosData) {
   // Don't check if it's in provider/model format
@@ -269,8 +271,8 @@ export function getComboModelsFromData(modelStr, combosData) {
  * Handle combo chat with fallback
  * @param {Object} options
  * @param {Object} options.body - Request body
- * @param {string[]} options.models - Array of model strings to try
- * @param {Function} options.handleSingleModel - Function to handle single model: (body, modelStr) => Promise<Response>
+ * @param {Array<string|Object>} options.models - Combo members: model strings or step objects ({ model, connectionId })
+ * @param {Function} options.handleSingleModel - (body, modelStr, step) => Promise<Response>
  * @param {Object} options.log - Logger object
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
  * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
@@ -287,7 +289,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     if (required.size > 0) {
       const reordered = reorderByCapabilities(rotatedModels, required);
       if (reordered[0] !== rotatedModels[0]) {
-        log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
+        log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${comboStepDisplay(reordered[0])}`);
       }
       rotatedModels = reordered;
     }
@@ -298,11 +300,12 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   let lastStatus = null;
 
   for (let i = 0; i < rotatedModels.length; i++) {
-    const modelStr = rotatedModels[i];
-    log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
+    const step = rotatedModels[i];
+    const modelStr = comboStepTarget(step);
+    log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${comboStepDisplay(step)}`);
 
     try {
-      const result = await handleSingleModel(body, modelStr);
+      const result = await handleSingleModel(body, modelStr, step);
       
       // Success (2xx) - return response
       if (result.ok) {
@@ -536,8 +539,8 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
  *
  * @param {Object} options
  * @param {Object} options.body - Request body (client format)
- * @param {string[]} options.models - Panel model strings
- * @param {Function} options.handleSingleModel - (body, modelStr) => Promise<Response>
+ * @param {Array<string|Object>} options.models - Panel members: model strings or step objects ({ model, connectionId })
+ * @param {Function} options.handleSingleModel - (body, modelStr, step, isPanel) => Promise<Response>
  * @param {Object} options.log - Logger
  * @param {string} [options.comboName] - Combo name (logging)
  * @param {string} [options.judgeModel] - Judge model; falls back to panel[0]
@@ -555,13 +558,17 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
 
   // A single-model fusion has nothing to fuse — just answer directly.
   if (panel.length === 1) {
-    return handleSingleModel(body, panel[0]);
+    return handleSingleModel(body, comboStepTarget(panel[0]), panel[0]);
   }
 
+  const targets = panel.map((entry) => comboStepTarget(entry));
   const cfg = { ...FUSION_DEFAULTS, ...(tuning || {}) };
   const minPanel = Math.min(Math.max(2, cfg.minPanel), panel.length);
-  const judge = judgeModel && judgeModel.trim() ? judgeModel.trim() : panel[0];
-  log.info("FUSION", `Combo "${comboName}" | panel=${panel.length} [${panel.join(", ")}] | judge=${judge} | quorum=${minPanel}`);
+  const explicitJudge = judgeModel && judgeModel.trim() ? judgeModel.trim() : null;
+  const judge = explicitJudge
+    ? { target: explicitJudge, step: null }
+    : { target: targets[0], step: panel[0] };
+  log.info("FUSION", `Combo "${comboName}" | panel=${panel.length} [${targets.join(", ")}] | judge=${judge.target} | quorum=${minPanel}`);
 
   // 1. Fan out to the panel in parallel: non-streaming, tools stripped (we want prose).
   const { tools, tool_choice, stream_options, ...rest } = body;
@@ -578,7 +585,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
 
   const t0 = Date.now();
-  const calls = panel.map((m) => withTimeout(handleSingleModel(panelBody, m, true), cfg.panelHardTimeoutMs));
+  const calls = panel.map((entry, i) => withTimeout(handleSingleModel(panelBody, targets[i], entry, true), cfg.panelHardTimeoutMs));
   const settled = await collectPanel(calls, { ...cfg, minPanel });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
 
@@ -586,7 +593,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const answers = [];
   for (let i = 0; i < settled.length; i++) {
     const res = settled[i];
-    const model = panel[i];
+    const model = targets[i];
     if (!res) { log.warn("FUSION", `Panel ${model} dropped (straggler/timeout)`); continue; }
     if (res.__timeout) { log.warn("FUSION", `Panel ${model} timed out`); continue; }
     if (res.__error) { log.warn("FUSION", `Panel ${model} threw`, { error: res.__error?.message || String(res.__error) }); continue; }
@@ -595,7 +602,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       const json = await res.clone().json();
       const text = extractPanelText(json);
       if (text) {
-        answers.push({ model, text });
+        answers.push({ model, step: panel[i], text });
         log.info("FUSION", `Panel ${model} ok (${text.length} chars)`);
       } else {
         log.warn("FUSION", `Panel ${model} returned empty content`);
@@ -615,11 +622,11 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
   if (answers.length === 1) {
     log.info("FUSION", `Only ${answers[0].model} succeeded — answering directly (no fusion)`);
-    return handleSingleModel(body, answers[0].model);
+    return handleSingleModel(body, answers[0].model, answers[0].step);
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).
   const judgeBody = appendUserTurn(body, buildJudgePrompt(answers));
-  log.info("FUSION", `Judging ${answers.length} answers with ${judge}`);
-  return handleSingleModel(judgeBody, judge);
+  log.info("FUSION", `Judging ${answers.length} answers with ${judge.target}`);
+  return handleSingleModel(judgeBody, judge.target, judge.step);
 }

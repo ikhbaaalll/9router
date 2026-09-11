@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { normalizeComboSteps } from "@/shared/utils/comboSteps.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -41,6 +42,16 @@ export async function PUT(request, { params }) {
       }
     }
     
+    // Normalize members: legacy "provider/model" strings stay strings, step objects
+    // ({ model, connectionId }) keep their pinned account.
+    if (body.models !== undefined) {
+      const normalized = normalizeComboSteps(body.models);
+      if (normalized.error) {
+        return NextResponse.json({ error: normalized.error }, { status: 400 });
+      }
+      body.models = normalized.models;
+    }
+
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
     const combo = await updateCombo(id, body);

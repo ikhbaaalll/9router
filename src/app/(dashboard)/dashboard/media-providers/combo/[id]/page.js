@@ -6,13 +6,15 @@ import Link from "next/link";
 import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { comboStepTarget } from "@/shared/utils/comboSteps.js";
 
 // Parse "providerId/model" or just "providerId" → { providerId, model }
 function parseModelEntry(entry) {
-  if (typeof entry !== "string") return { providerId: "", model: "" };
-  const idx = entry.indexOf("/");
-  if (idx < 0) return { providerId: entry, model: "" };
-  return { providerId: entry.slice(0, idx), model: entry.slice(idx + 1) };
+  const target = comboStepTarget(entry);
+  if (!target) return { providerId: "", model: "" };
+  const idx = target.indexOf("/");
+  if (idx < 0) return { providerId: target, model: "" };
+  return { providerId: target.slice(0, idx), model: target.slice(idx + 1) };
 }
 
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -120,7 +122,7 @@ export default function ComboDetailPage() {
 
   const handleAddModel = async (model) => {
     const value = model?.value || model;
-    if (!value || providers.includes(value)) return;
+    if (!value || providers.some((p) => comboStepTarget(p) === value)) return;
     const next = [...providers, value];
     setProviders(next);
     await saveCombo({ models: next });
@@ -128,8 +130,8 @@ export default function ComboDetailPage() {
 
   const handleDeselectModel = async (model) => {
     const value = model?.value || model;
-    if (!value || !providers.includes(value)) return;
-    const next = providers.filter((p) => p !== value);
+    if (!value || !providers.some((p) => comboStepTarget(p) === value)) return;
+    const next = providers.filter((p) => comboStepTarget(p) !== value);
     setProviders(next);
     await saveCombo({ models: next });
   };

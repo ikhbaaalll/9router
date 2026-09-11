@@ -186,7 +186,9 @@ describe("CommandCode in Combo Fallback", () => {
     const data = await comboResponse.json();
     expect(data.choices[0].message.content).toBe("Fallback success!");
     expect(handleSingleModel).toHaveBeenCalledTimes(2);
-    expect(handleSingleModel).toHaveBeenNthCalledWith(1, expect.anything(), "commandcode/poolside/laguna-s-2.1-free");
-    expect(handleSingleModel).toHaveBeenNthCalledWith(2, expect.anything(), "openai/gpt-4o-mini");
+    // 3rd argument is the combo step: the member string itself for legacy combos
+    // (a step object carries a pinned account).
+    expect(handleSingleModel).toHaveBeenNthCalledWith(1, expect.anything(), "commandcode/poolside/laguna-s-2.1-free", "commandcode/poolside/laguna-s-2.1-free");
+    expect(handleSingleModel).toHaveBeenNthCalledWith(2, expect.anything(), "openai/gpt-4o-mini", "openai/gpt-4o-mini");
   });
 });

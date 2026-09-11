@@ -7,6 +7,7 @@ import {
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/localDb";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
+import { comboStepConnectionId } from "@/shared/utils/comboSteps.js";
 import { handleFetchCore } from "open-sse/handlers/fetch/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -99,7 +100,7 @@ export async function handleFetch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m, step) => handleSingleProviderFetch(b, m, request, apiKey, settings, comboStepConnectionId(step)),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -110,7 +111,7 @@ export async function handleFetch(request) {
   return handleSingleProviderFetch(body, providerInput, request, apiKey, settings);
 }
 
-async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings, preferredConnectionId = null) {
   const targetUrl = body.url;
   const format = body.format;
   const maxCharacters = body.max_characters;
@@ -165,7 +166,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   const fetchLockKey = `webfetch:${providerId}`;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey);
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey, { preferredConnectionId });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
