@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Card, Button, Modal, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle, ComboFormModal } from "@/shared/components";
+import { Card, Button, Modal, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle, ComboBuilder } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
+import { COMBO_STRATEGIES } from "@/shared/constants/comboStrategies.js";
 import { comboStepTarget, comboStepConnectionId } from "@/shared/utils/comboSteps.js";
 import { ComboBuilder } from "@/shared/components";
 
@@ -194,41 +195,38 @@ export default function CombosPage() {
     }
   };
 
-  const handleCreate = async (data) => {
+  // Builder save: create or update the combo, then store its strategy in
+  // settings.comboStrategies[name] (the combo row itself carries no strategy field).
+  const handleBuilderSave = async ({ name: comboName, models, strategy }) => {
+    const editing = editingCombo;
     try {
-      const res = await fetch("/api/combos", {
-        method: "POST",
+      const res = await fetch(editing ? `/api/combos/${editing.id}` : "/api/combos", {
+        method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(editing ? { name: comboName, models } : { name: comboName, models }),
       });
-      if (res.ok) {
-        await fetchData();
-        setShowCreateModal(false);
-      } else {
-        const err = await res.json();
-        alert(err.error || "Failed to create combo");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || `Failed to ${editing ? "update" : "create"} combo`);
+        return;
       }
-    } catch (error) {
-      console.log("Error creating combo:", error);
-    }
-  };
-
-  const handleUpdate = async (id, data) => {
-    try {
-      const res = await fetch(`/api/combos/${id}`, {
-        method: "PUT",
+      // Strategy lives in settings, keyed by combo name. Drop the entry on default
+      // so settings stay clean; on rename, clear the old key.
+      const updated = { ...comboStrategies };
+      if (editing?.name && editing.name !== comboName) delete updated[editing.name];
+      if (!strategy || strategy === "fallback") delete updated[comboName];
+      else updated[comboName] = { ...(updated[comboName] || {}), fallbackStrategy: strategy };
+      await fetch("/api/settings", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ comboStrategies: updated }),
       });
-      if (res.ok) {
-        await fetchData();
-        setEditingCombo(null);
-      } else {
-        const err = await res.json();
-        alert(err.error || "Failed to update combo");
-      }
+      setComboStrategies(updated);
+      await fetchData();
+      setShowCreateModal(false);
+      setEditingCombo(null);
     } catch (error) {
-      console.log("Error updating combo:", error);
+      console.log("Error saving combo:", error);
     }
   };
 
@@ -515,25 +513,24 @@ export default function CombosPage() {
         getCaps={getCaps}
       />
 
-      {/* Create Modal - Use key to force remount and reset state */}
+      {/* Create / edit wizard. Key forces a remount so state resets per combo. */}
       {showCreateModal && (
-        <ComboFormModal
+        <ComboBuilder
           key="create"
           isOpen={showCreateModal}
           onClose={() => setShowCreateModal(false)}
-          onSave={handleCreate}
-          activeProviders={activeProviders}
+          onSave={handleBuilderSave}
         />
       )}
 
       {editingCombo && (
-        <ComboFormModal
+        <ComboBuilder
           key={editingCombo.id}
           isOpen={!!editingCombo}
           combo={editingCombo}
+          comboStrategy={comboStrategies[editingCombo.name]?.fallbackStrategy}
           onClose={() => setEditingCombo(null)}
-          onSave={(data) => handleUpdate(editingCombo.id, data)}
-          activeProviders={activeProviders}
+          onSave={handleBuilderSave}
         />
       )}
 
@@ -560,6 +557,8 @@ const fmtK = (n) => {
   }
   return `${Math.round(n / 1000)}k`;
 };
+
+const STRATEGY_OPTIONS = COMBO_STRATEGIES.map((s) => ({ value: s.value, label: s.label }));
 
 function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);

@@ -65,6 +65,17 @@ export function comboStepDisplay(entry) {
 }
 
 /**
+ * Weight of a step, used by the "weighted" strategy. Legacy strings weigh 1.
+ * @param {string|Object} entry - Combo member
+ * @returns {number} Positive weight, or 1 when unset/invalid
+ */
+export function comboStepWeight(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return 1;
+  const weight = Number(entry.weight);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
+/**
  * Normalize one step for storage. Keeps legacy strings, drops unknown fields, and
  * drops empty account pins (an empty pin means "auto").
  * @param {string|Object} entry - Raw combo member from a request body
@@ -82,14 +93,16 @@ export function normalizeComboStep(entry) {
 
   const connectionId = comboStepConnectionId(entry);
   const label = typeof entry.label === "string" ? entry.label.trim() : "";
+  const weight = entry.weight === undefined ? null : comboStepWeight(entry);
 
-  // Nothing pinned → store the plain string so old readers keep working.
-  if (!connectionId) return target;
+  // Nothing pinned and no weight → store the plain string so old readers keep working.
+  if (!connectionId && weight === null) return target;
 
   return {
     model: target,
-    connectionId,
+    ...(connectionId ? { connectionId } : {}),
     ...(label ? { label } : {}),
+    ...(weight !== null ? { weight } : {}),
   };
 }
 

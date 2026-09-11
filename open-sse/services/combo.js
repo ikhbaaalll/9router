@@ -7,6 +7,21 @@ import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { comboStepTarget, comboStepConnectionId, comboStepDisplay } from "@/shared/utils/comboSteps.js";
+import { normalizeComboStrategy } from "@/shared/constants/comboStrategies.js";
+import { orderComboMembers, recordComboAttempt, resetComboStrategyState } from "./comboStrategy.js";
+
+// Price of a member for the cost-optimized strategy. Loaded lazily: the pricing
+// table lives in the app DB, and the engine must still work without it (fail-open).
+async function memberCost(entry) {
+  const { getPricingForModel } = await import("@/lib/db/repos/pricingRepo.js");
+  const target = comboStepTarget(entry);
+  const slash = target.indexOf("/");
+  const provider = slash > 0 ? target.slice(0, slash) : "";
+  const model = slash > 0 ? target.slice(slash + 1) : target;
+  const pricing = await getPricingForModel(provider, model);
+  const cost = Number(pricing?.input);
+  return Number.isFinite(cost) ? cost : Number.POSITIVE_INFINITY;
+}
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -245,6 +260,7 @@ export function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
 export function resetComboRotation(comboName) {
   if (comboName) comboRotationState.delete(comboName);
   else comboRotationState.clear();
+  resetComboStrategyState(comboName);
 }
 
 /**
@@ -275,13 +291,23 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {Function} options.handleSingleModel - (body, modelStr, step) => Promise<Response>
  * @param {Object} options.log - Logger object
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
- * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
+ * @param {string} [options.comboStrategy] - Combo strategy (see COMBO_STRATEGY_VALUES)
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
 export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
-  // Apply rotation strategy if enabled
-  let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
+  const strategy = normalizeComboStrategy(comboStrategy);
+
+  // Rotation is computed first (it owns the sticky counter), then the strategy
+  // orders the list. round-robin consumes the rotation; every other strategy
+  // reorders on its own and ignores it.
+  const rotated = getRotatedModels(models, comboName, strategy === "round-robin" ? "round-robin" : "fallback", comboStickyLimit);
+  let rotatedModels = await orderComboMembers(rotated, strategy, {
+    comboName,
+    stickyLimit: comboStickyLimit,
+    rotateTo: strategy === "round-robin" ? rotated : null,
+    costOf: strategy === "cost-optimized" ? memberCost : null,
+  });
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
   if (autoSwitch) {
@@ -310,6 +336,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // Success (2xx) - return response
       if (result.ok) {
         log.info("COMBO", `Model ${modelStr} succeeded`);
+        recordComboAttempt(comboName, step, true);
         return result;
       }
 
@@ -339,6 +366,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
       if (!shouldFallback) {
         log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
+        recordComboAttempt(comboName, step, false);
         return result;
       }
 
@@ -354,11 +382,13 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // Fallback to next model
       lastError = errorText || String(result.status);
       if (!lastStatus) lastStatus = result.status;
+      recordComboAttempt(comboName, step, false);
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
       // Catch unexpected exceptions to ensure fallback continues
       lastError = error.message || String(error);
       if (!lastStatus) lastStatus = 500;
+      recordComboAttempt(comboName, step, false);
       log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
     }
   }
