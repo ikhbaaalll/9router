@@ -90,7 +90,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // sourceFormat-matched transport if that format is declared (opencode-go models
   // differ — kimi/glm only do /chat/completions). Undeclared models keep the
   // upstream default (use the transport), preserving behavior for glm/deepseek/...
-  const useTransport = (!modelSupportedFormats || modelSupportedFormats.includes(sourceFormat)) ? runtimeTransport : null;
+  // A model that does not serve the client's format still needs the transport for a
+  // format it does declare: the URL must match the translated body. Without this a
+  // responses-only model (opencode-go grok-4.6, gpt-5.6-luna) was translated to
+  // Responses but posted to /chat/completions and rejected upstream.
+  const declaredFallbackFormat = modelSupportedFormats && !modelSupportedFormats.includes(sourceFormat)
+    ? (modelTargetFormat || modelSupportedFormats[0])
+    : null;
+  const useTransport = (!modelSupportedFormats || modelSupportedFormats.includes(sourceFormat))
+    ? runtimeTransport
+    : resolveTransport(provider, declaredFallbackFormat);
   // A source-format-matched endpoint keeps the request lossless. Prefer it
   // over a model-level targetFormat, which is only the fallback for clients
   // whose wire format has no supported transport (for example MiniMax-M3:

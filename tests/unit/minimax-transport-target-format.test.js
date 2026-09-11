@@ -118,10 +118,10 @@ vi.mock("@/lib/usageDb.js", () => ({
   saveRequestDetail: vi.fn(() => Promise.resolve()),
 }));
 
-function makeOptions(body) {
+function makeOptions(body, provider = "minimax-cn", model = "MiniMax-M3") {
   return {
     body,
-    modelInfo: { provider: "minimax-cn", model: "MiniMax-M3" },
+    modelInfo: { provider, model },
     credentials: { apiKey: "test-api-key", providerSpecificData: {} },
     clientRawRequest: {
       endpoint: "/v1/chat/completions",
@@ -185,5 +185,58 @@ describe("MiniMax-M3 multi-transport routing", () => {
     expect(requestBody._translatedTo).toBe("openai");
     expect(requestBody).not.toHaveProperty("system");
     expect(executeMock.mock.calls[0][0].credentials.runtimeTransport.format).toBe("openai");
+  });
+});
+
+/**
+ * The reverse case: a model whose only endpoint is not the client's format must be
+ * translated AND sent to the transport for the format it does declare. The URL
+ * previously stayed on the sourceFormat transport, so an OpenAI client asking for
+ * grok-4.6 got a Responses body posted to /chat/completions and a 401 back.
+ */
+describe("opencode-go responses-only models", () => {
+  beforeEach(() => {
+    executeMock.mockReset();
+    translateRequestMock.mockClear();
+    executeMock.mockResolvedValue({
+      response: new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      url: "https://opencode.ai/zen/go/v1/responses",
+      headers: {},
+      transformedBody: {},
+    });
+  });
+
+  it("sends a Responses-only model to /responses, not /chat/completions", async () => {
+    const body = {
+      model: "opencode-go/grok-4.6",
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    };
+
+    const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+    await handleChatCore(makeOptions(body, "opencode-go", "grok-4.6"));
+
+    const transport = executeMock.mock.calls[0][0].credentials.runtimeTransport;
+    expect(transport.format).toBe("openai-responses");
+    expect(transport.baseUrl).toBe("https://opencode.ai/zen/go/v1/responses");
+    expect(translateRequestMock.mock.calls[0][1]).toBe("openai-responses");
+  });
+
+  it("leaves a chat/completions-only model on its matching transport", async () => {
+    const body = {
+      model: "opencode-go/glm-5.3",
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    };
+
+    const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+    await handleChatCore(makeOptions(body, "opencode-go", "glm-5.3"));
+
+    const transport = executeMock.mock.calls[0][0].credentials.runtimeTransport;
+    expect(transport.format).toBe("openai");
+    expect(transport.baseUrl).toBe("https://opencode.ai/zen/go/v1/chat/completions");
   });
 });

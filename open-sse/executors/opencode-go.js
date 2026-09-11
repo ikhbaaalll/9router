@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
+import { getAppPackageVersion } from "../config/appConstants.js";
 import {
   normalizeResponsesInput,
   clampResponsesCallId,
@@ -11,10 +12,20 @@ import {
 
 const SESSION_HEADER = "x-opencode-session";
 const SESSION_FIELD = "_opencodeGoSession";
+const USER_AGENT_HEADER = "user-agent";
 const MAX_SESSION_LENGTH = 256;
+const MAX_USER_AGENT_LENGTH = 256;
 
 const RESPONSES_BASE_URL = "https://opencode.ai/zen/go/v1/responses";
 const MAX_TOOL_NAME_LEN = 128;
+
+const sessionHeaderFor = (headers, name) => {
+  if (!headers || typeof headers !== "object") return null;
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === name) return typeof value === "string" ? value : null;
+  }
+  return null;
+};
 
 function normalizeSession(value) {
   if (typeof value !== "string") return null;
@@ -24,11 +35,19 @@ function normalizeSession(value) {
 }
 
 function nativeSession(headers) {
-  if (!headers || typeof headers !== "object") return null;
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === SESSION_HEADER) return normalizeSession(value);
-  }
-  return null;
+  return normalizeSession(sessionHeaderFor(headers, SESSION_HEADER));
+}
+
+// OpenCode Go asks clients to identify themselves with a real agent user agent
+// rather than a generic HTTP-library name (https://opencode.ai/docs/go/#where-can-i-use-it),
+// and their edge blocks library names outright (Cloudflare 1010). Node fetch would
+// otherwise send `node`, dropping the identity of the agent that started the request.
+// ponytail: forwards the client's own UA, which is the honest identity here; a hash or
+// allowlist can come later if upstream ever asks for a router-specific string.
+function clientUserAgent(headers) {
+  const ua = sessionHeaderFor(headers, USER_AGENT_HEADER);
+  const trimmed = typeof ua === "string" ? ua.trim() : "";
+  return trimmed && trimmed.length <= MAX_USER_AGENT_LENGTH ? trimmed : null;
 }
 
 function translatedSession(sessionId, clientTool) {
@@ -140,6 +159,8 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   buildHeaders(credentials, stream = true, url, model) {
     const headers = super.buildHeaders(credentials || {}, stream, url, model);
+    const clientUa = clientUserAgent(credentials?.rawHeaders);
+    headers[USER_AGENT_HEADER] = clientUa || `9router/${getAppPackageVersion()}`;
     const prepared = credentials?.[SESSION_FIELD];
     if (prepared) {
       headers[SESSION_HEADER] = prepared;

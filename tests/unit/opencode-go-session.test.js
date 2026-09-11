@@ -147,6 +147,38 @@ describe("OpenCode Go x-opencode-session", () => {
     const headers = new DefaultExecutor("openai").buildHeaders({ apiKey: "test-key" }, false);
     expect(headers["x-opencode-session"]).toBeUndefined();
   });
+
+  it("forwards the calling agent's user agent instead of the library default", () => {
+    const executor = getExecutor("opencode-go");
+    const prepared = executor.prepareRequestCredentials({
+      body: { messages: [{ role: "user", content: "hello" }] },
+      credentials: makeCredentials({ rawHeaders: { "User-Agent": "HermesAgent/1.2.3" } }),
+      providerSessionId: "conversation-a",
+      clientTool: "hermes",
+    });
+
+    expect(executor.buildHeaders(prepared, false)["user-agent"]).toBe("HermesAgent/1.2.3");
+  });
+
+  it("identifies itself when the client sends no user agent", () => {
+    const executor = getExecutor("opencode-go");
+
+    const ua = executor.buildHeaders(makeCredentials(), false)["user-agent"];
+    expect(ua).toMatch(/^9router\//);
+    expect(ua).not.toBe("node");
+  });
+
+  it("ignores an oversized user agent", () => {
+    const executor = getExecutor("opencode-go");
+    const prepared = executor.prepareRequestCredentials({
+      body: {},
+      credentials: makeCredentials({ rawHeaders: { "user-agent": "x".repeat(257) } }),
+      providerSessionId: "conversation-a",
+      clientTool: "claude",
+    });
+
+    expect(executor.buildHeaders(prepared, false)["user-agent"]).toMatch(/^9router\//);
+  });
 });
 
 describe("chatCore provider session forwarding", () => {
