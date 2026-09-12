@@ -289,8 +289,8 @@ const PROVIDER_MODELS_CONFIG = {
   },
 
   // Cline/ClinePass share api.cline.bot/api/v1/models. The service layer already
-  // handles Bearer-vs-`workos:` auth and swallows failures into null, so these follow
-  // the cursor direct pattern (no refreshFn) and only differ in filtering:
+  // builds the bare Bearer auth header and swallows failures into null, so these
+  // follow the cursor direct pattern (no refreshFn) and only differ in filtering:
   // cline returns the whole catalog verbatim, clinepass keeps cline-pass/* only.
   cline: {
     customResolver: async (connection) => {

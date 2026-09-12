@@ -507,6 +507,31 @@ export function parseQuotaData(provider, data) {
         }
         break;
 
+      case "commandcode":
+      case "clinepass":
+        if (data.message) {
+          normalizedQuotas.push({
+            name: "error",
+            used: 0,
+            total: 0,
+            resetAt: null,
+            message: data.message,
+          });
+        } else if (data.quotas) {
+          Object.entries(data.quotas).forEach(([name, quota]) => {
+            normalizedQuotas.push({
+              name: quota.displayName || name,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              remainingPercentage: quota.remainingPercentage,
+              resetAt: quota.resetAt || null,
+              currency: quota.currency,
+              unlimited: quota.unlimited,
+            });
+          });
+        }
+        break;
+
       case "claude":
         if (data.message) {
           // Handle error message case
