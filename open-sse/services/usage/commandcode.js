@@ -1,134 +1,176 @@
 /**
- * Command Code usage — billing credits + 5h/weekly rate windows.
- * Mirrors ~/cc-usage.mjs: whoami → credits + subscriptions.
+ * Command Code (commandcode.ai) usage — monthly credit pool + 5h/weekly rolling
+ * windows, from the same /alpha endpoints the CommandCode CLI /usage view uses:
+ *   GET /alpha/whoami                → org id (optional)
+ *   GET /alpha/billing/credits       → credits pools + windowLimits
+ *   GET /alpha/billing/subscriptions → planId + billing period
+ *   GET /alpha/usage/summary         → period spend
+ *
+ * Ported from OmniRoute's usage/command-code.ts (2026-09-12), shapes verified
+ * live against the migrated GOAT account.
  */
 
-import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { parseResetTime, toFiniteNumber } from "./shared.js";
+import { fetchWithTimeout, parseResetTime, toFiniteNumber } from "./shared.js";
 
-const BASE = (process.env.COMMAND_CODE_API_BASE_URL || "https://api.commandcode.ai").replace(/\/$/, "");
+const COMMAND_CODE_API_BASE = "https://api.commandcode.ai";
 
-const PLAN_NAMES = {
-  "individual-go": "Go",
-  "individual-goat": "GOAT",
-  "individual-pro": "Pro",
-  "individual-pro-v1": "Pro",
-  "individual-provider": "Provider",
-  "individual-max": "Max",
-  "individual-ultra": "Ultra",
-  "teams-pro": "Teams Pro",
-};
-
-const PLAN_CAPS = {
-  "individual-go": 10,
-  "individual-goat": 70,
-  "individual-pro": 30,
-  "individual-pro-v1": 80,
-  "individual-provider": 15,
-  "individual-max": 150,
-  "individual-ultra": 300,
-  "teams-pro": 40,
-};
-
-function qs(route, params) {
-  const s = new URLSearchParams(
-    Object.entries(params || {}).filter(([, v]) => v != null),
-  ).toString();
-  return s ? `${route}?${s}` : route;
+function withCurrency(quota, displayName) {
+  return { ...quota, currency: "USD", displayName };
 }
 
-function windowQuota(win) {
-  if (!win || typeof win !== "object") return null;
-  const used = toFiniteNumber(win.used, 0);
-  const total = toFiniteNumber(win.cap, 0);
-  if (total <= 0 && used <= 0) return null;
-  return {
-    used,
-    total,
-    remaining: Math.max(0, total - used),
-    unlimited: false,
-    resetAt: parseResetTime(win.resetAt),
+function humanizePlanId(planId) {
+  if (!planId) return "Command Code";
+  const labels = {
+    "individual-goat": "GOAT",
+    "individual-go": "Go",
+    "individual-pro": "Pro",
+    "individual-max-10x": "Max 10×",
+    "individual-max-20x": "Max 20×",
+    "team-pro": "Team Pro",
   };
+  const mapped = labels[planId];
+  if (mapped) return `Command Code · ${mapped}`;
+  const title = planId
+    .replace(/^individual-/, "")
+    .replace(/^team-/, "Team ")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return `Command Code · ${title || planId}`;
 }
 
-/**
- * @param {string|null|undefined} apiKey
- * @param {object|null} proxyOptions
- */
+function creditRemaining(credits) {
+  return (
+    Math.max(0, toFiniteNumber(credits.monthlyCredits, 0)) +
+    Math.max(0, toFiniteNumber(credits.purchasedCredits, 0)) +
+    Math.max(0, toFiniteNumber(credits.freeCredits, 0))
+  );
+}
+
+function windowQuota(window, displayName) {
+  const w = window && typeof window === "object" ? window : {};
+  const cap = toFiniteNumber(w.cap, 0);
+  if (!(cap > 0)) return null;
+  const used = toFiniteNumber(w.used, 0);
+  const remaining = Math.max(0, cap - used);
+  return withCurrency(
+    {
+      used,
+      total: cap,
+      remaining,
+      remainingPercentage: cap > 0 ? Math.round((remaining / cap) * 1000) / 10 : 0,
+      resetAt: parseResetTime(w.resetAt),
+      unlimited: false,
+    },
+    displayName
+  );
+}
+
+/** Pure window/credit assembly, exported for tests. */
+export function buildCommandCodeQuotas(credits, windowLimits, summary, subscription, planId) {
+  const quotas = {};
+  const fiveHour = windowQuota(windowLimits?.fiveHour, "5-hour window");
+  if (fiveHour) quotas.five_hour = fiveHour;
+  const weekly = windowQuota(windowLimits?.weekly, "Weekly window");
+  if (weekly) quotas.weekly = weekly;
+
+  const periodUsed = toFiniteNumber(summary?.totalCost, Number.NaN);
+  const used = Number.isFinite(periodUsed) && periodUsed >= 0 ? periodUsed : 0;
+  const remaining = creditRemaining(credits || {});
+  const total = used + remaining;
+  quotas.credits = withCurrency(
+    {
+      used,
+      total,
+      remaining,
+      remainingPercentage:
+        total > 0 ? Math.round((remaining / total) * 1000) / 10 : remaining > 0 ? 100 : 0,
+      resetAt: parseResetTime(subscription?.currentPeriodEnd),
+      unlimited: false,
+      grantedBalance: Math.max(0, toFiniteNumber(credits?.monthlyCredits, 0)),
+      toppedUpBalance:
+        Math.max(0, toFiniteNumber(credits?.purchasedCredits, 0)) +
+        Math.max(0, toFiniteNumber(credits?.freeCredits, 0)),
+    },
+    "Credits"
+  );
+  return quotas;
+}
+
 export async function getCommandCodeUsage(apiKey, proxyOptions = null) {
-  if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+  if (!apiKey) {
     return { message: "Command Code API key not available. Add a key to view usage." };
   }
 
   const headers = {
-    Authorization: `Bearer ${apiKey.trim()}`,
     Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    // The API's edge WAF rejects generic library UAs (Cloudflare 1010).
+    "User-Agent": "commandcode/0.25.7 (Macintosh; Intel Mac OS X 10_15_7) Node/22",
+    "x-command-code-version": "0.25.7",
+    "x-cli-environment": "cli",
   };
 
-  const get = async (route) => {
-    const response = await proxyAwareFetch(
-      BASE + route,
-      { method: "GET", headers },
-      proxyOptions,
+  const fetchJson = async (path, timeoutMs = 10000) => {
+    const res = await fetchWithTimeout(
+      `${COMMAND_CODE_API_BASE}${path}`, { method: "GET", headers }, timeoutMs, proxyOptions
     );
-    return response;
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    return { ok: res.ok, status: res.status, body };
   };
+
+  const rejected = (reason) => ({
+    message: `Command Code connected. ${reason}`,
+  });
 
   try {
-    const whoamiRes = await get(qs("/alpha/whoami", { limits: "1" }));
-    if (whoamiRes.status === 401 || whoamiRes.status === 403) {
-      return { plan: "Command Code", message: "Command Code authentication failed. Check the API key." };
-    }
-    if (!whoamiRes.ok) {
-      return { plan: "Command Code", message: `Command Code usage API error (${whoamiRes.status})` };
-    }
-    const whoami = await whoamiRes.json().catch(() => ({}));
-    const orgId = whoami?.org?.id ?? null;
+    let orgId = null;
+    try {
+      const whoami = await fetchJson("/alpha/whoami");
+      if (whoami.status === 401 || whoami.status === 403) return rejected("The API key was rejected — reconnect or rotate the key.");
+      if (whoami.ok && whoami.body && whoami.body.org) {
+        const id = whoami.body.org.id;
+        if (typeof id === "string" && id.trim()) orgId = id.trim();
+      }
+    } catch { /* optional */ }
 
-    const [creditsRes, subsRes] = await Promise.all([
-      get(qs("/alpha/billing/credits", { orgId })),
-      get(qs("/alpha/billing/subscriptions", { orgId })),
-    ]);
-
-    if (creditsRes.status === 401 || creditsRes.status === 403 || subsRes.status === 401 || subsRes.status === 403) {
-      return { plan: "Command Code", message: "Command Code authentication failed. Check the API key." };
-    }
-    if (!creditsRes.ok) {
-      return { plan: "Command Code", message: `Command Code credits API error (${creditsRes.status})` };
-    }
-    if (!subsRes.ok) {
-      return { plan: "Command Code", message: `Command Code subscriptions API error (${subsRes.status})` };
+    const q = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+    const creditsRes = await fetchJson(`/alpha/billing/credits${q}`);
+    if (creditsRes.status === 401 || creditsRes.status === 403) return rejected("The API key was rejected — reconnect or rotate the key.");
+    if (!creditsRes.ok || !creditsRes.body) {
+      return rejected(`/alpha/billing/credits returned HTTP ${creditsRes.status}.`);
     }
 
-    const creditsBody = await creditsRes.json().catch(() => ({}));
-    const subsBody = await subsRes.json().catch(() => ({}));
-    const planId = subsBody?.data?.planId ?? null;
-    const plan = (planId && PLAN_NAMES[planId]) || planId || "Command Code";
-    const cap = planId ? (PLAN_CAPS[planId] || 0) : 0;
-    const c = creditsBody?.credits || {};
-    const remaining =
-      toFiniteNumber(c.monthlyCredits, 0) +
-      toFiniteNumber(c.purchasedCredits, 0) +
-      toFiniteNumber(c.freeCredits, 0);
-    const used = cap > 0 ? Math.max(0, cap - remaining) : 0;
-    const total = cap > 0 ? cap : remaining;
+    const credits = creditsRes.body.credits && typeof creditsRes.body.credits === "object" ? creditsRes.body.credits : {};
+    const windowLimits = creditsRes.body.windowLimits && typeof creditsRes.body.windowLimits === "object" ? creditsRes.body.windowLimits : {};
 
-    const quotas = {};
-    quotas.Credits = {
-      used,
-      total,
-      remaining,
-      unlimited: cap <= 0,
-      resetAt: parseResetTime(subsBody?.data?.currentPeriodEnd),
+    let subscription = null;
+    try {
+      const subRes = await fetchJson(`/alpha/billing/subscriptions${q}`);
+      if (subRes.ok && subRes.body) subscription = subRes.body.data || subRes.body;
+    } catch { /* soft-fail */ }
+
+    let summary = null;
+    try {
+      const since = subscription?.currentPeriodStart
+        ? `${q ? `${q}&` : "?"}since=${encodeURIComponent(subscription.currentPeriodStart)}`
+        : q;
+      const sumRes = await fetchJson(`/alpha/usage/summary${since}`);
+      if (sumRes.ok && sumRes.body) summary = sumRes.body;
+    } catch { /* soft-fail */ }
+
+    const quotas = buildCommandCodeQuotas(credits, windowLimits, summary, subscription, subscription?.planId);
+
+    return {
+      plan: humanizePlanId(subscription?.planId),
+      quotas,
+      windowExceeded: typeof windowLimits.exceeded === "string" ? windowLimits.exceeded : null,
+      limited: windowLimits.limited === true,
     };
-
-    const fiveHour = windowQuota(creditsBody?.windowLimits?.fiveHour);
-    if (fiveHour) quotas["Session (5h)"] = fiveHour;
-    const weekly = windowQuota(creditsBody?.windowLimits?.weekly);
-    if (weekly) quotas.Weekly = weekly;
-
-    return { plan, quotas };
   } catch (error) {
-    return { message: `Command Code error: ${error.message}` };
+    return { message: `Command Code usage error: ${error?.message || String(error)}` };
   }
 }
