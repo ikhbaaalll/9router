@@ -31,6 +31,7 @@ import {
   getSettings,
 } from "../src/lib/db/index.js";
 import { AI_PROVIDERS, getProviderAlias } from "../src/shared/constants/providers.js";
+import { normalizeComboModelId } from "./lib/normalizeComboModelId.mjs";
 
 // Providers the fork's own registry already knows — no node needed for these.
 const KNOWN_PROVIDERS = new Set(Object.keys(AI_PROVIDERS));
@@ -228,7 +229,7 @@ function expandModels(name, seen = new Set()) {
       out.push(...expandModels(m.comboName, new Set(seen)));
       continue;
     }
-    const model = m.model;
+    const model = normalizeComboModelId(m.model);
     if (!model) continue;
     const pinned = remapConnectionId(m.connectionId);
     if (m.connectionId && !pinned) report.skipped.push(`combo ${name}: pin on missing connection dropped (${m.label || m.connectionId.slice(0, 8)})`);
