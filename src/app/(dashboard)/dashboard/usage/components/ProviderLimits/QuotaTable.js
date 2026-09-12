@@ -237,7 +237,12 @@ export default function QuotaTable({
                     </div>
                   )
                 ) : (
-                  <div className={`${resetPrimary} text-text-muted italic`}>N/A</div>
+                  <div
+                    className={`${resetPrimary} text-text-muted italic`}
+                    title="Sliding window — never resets, oldest usage drops off continuously"
+                  >
+                    Rolling
+                  </div>
                 )}
               </div>
 

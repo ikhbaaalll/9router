@@ -5,6 +5,7 @@
 import { getGitHubUsage } from "./usage/github.js";
 import { getGeminiUsage, getAntigravityUsage } from "./usage/google.js";
 import { getClaudeUsage, consumeClaudeResetGrant } from "./usage/claude.js";
+import { getClinepassUsage } from "./usage/clinepass.js";
 import { getCodexUsage, consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits } from "./usage/codex.js";
 
 export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits, consumeClaudeResetGrant };
@@ -40,6 +41,8 @@ const USAGE_HANDLERS = {
   "gemini-cli": (c) => getGeminiUsage(c.accessToken, c.providerDataWithProjectId, c.proxyOptions),
   antigravity: (c) => getAntigravityUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force }),
+  "commandcode": (c) => getCommandCodeUsage(c.apiKey, c.proxyOptions),
+  clinepass: (c) => getClinepassUsage(c.accessToken || c.apiKey, c.providerSpecificData, c.proxyOptions),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   qoder: (c) => getQoderUsageFor(c),
@@ -62,7 +65,6 @@ const USAGE_HANDLERS = {
   groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
   zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   "xiaomi-mimo": (c) => getXiaomiMimoUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
-  commandcode: (c) => getCommandCodeUsage(c.apiKey, c.proxyOptions),
 };
 
 // Qoder intl/CN share one usage path: PATs must be exchanged to a job token
