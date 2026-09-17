@@ -1,6 +1,7 @@
 import { BaseExecutor } from "./base.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { PROVIDERS } from "../config/providers.js";
+import { cachedTokensFrom } from "../translator/concerns/usage.js";
 
 // Trae executor — SOLO remote agent API.
 //
@@ -258,6 +259,7 @@ export default class TraeExecutor extends BaseExecutor {
                 choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
               });
               if (usage) {
+                const cached = cachedTokensFrom(usage);
                 emit({
                   id: responseId,
                   object: "chat.completion.chunk",
@@ -268,6 +270,7 @@ export default class TraeExecutor extends BaseExecutor {
                     prompt_tokens: usage.prompt_tokens || 0,
                     completion_tokens: usage.completion_tokens || 0,
                     total_tokens: usage.total_tokens || 0,
+                    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
                   },
                 });
               }
@@ -317,10 +320,12 @@ export default class TraeExecutor extends BaseExecutor {
       choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
     };
     if (usage) {
+      const cached = cachedTokensFrom(usage);
       out.usage = {
         prompt_tokens: usage.prompt_tokens || 0,
         completion_tokens: usage.completion_tokens || 0,
         total_tokens: usage.total_tokens || 0,
+        ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
       };
     }
     return {
