@@ -275,12 +275,17 @@ export function extractUsage(chunk) {
     });
   }
 
-  // OpenAI format (also covers DeepSeek which uses prompt_cache_hit_tokens)
+  // OpenAI format (also covers DeepSeek which uses prompt_cache_hit_tokens, and
+  // AI-SDK-v5-shaped providers which spell it cachedInputTokens / nested details)
   if (chunk.usage && typeof chunk.usage === "object" && chunk.usage.prompt_tokens !== undefined) {
     return normalizeUsage({
       prompt_tokens: chunk.usage.prompt_tokens,
       completion_tokens: chunk.usage.completion_tokens || 0,
-      cached_tokens: chunk.usage.prompt_tokens_details?.cached_tokens || chunk.usage.prompt_cache_hit_tokens,
+      cached_tokens: chunk.usage.prompt_tokens_details?.cached_tokens
+        || chunk.usage.prompt_cache_hit_tokens
+        || chunk.usage.cachedInputTokens
+        || chunk.usage.inputTokenDetails?.cacheReadTokens
+        || chunk.usage.cached_tokens,
       reasoning_tokens: chunk.usage.completion_tokens_details?.reasoning_tokens,
       prompt_tokens_details: chunk.usage.prompt_tokens_details,
       completion_tokens_details: chunk.usage.completion_tokens_details
