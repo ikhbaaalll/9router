@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { canonicalizeUsage, extractUsage, mergeUsage } from "../../open-sse/utils/usageTracking.js";
 import { calculateCostFromTokens } from "../../open-sse/providers/pricing.js";
-import { buildUsage, toOpenAIUsage } from "../../open-sse/translator/concerns/usage.js";
+import { buildUsage, cachedTokensFrom, toOpenAIUsage } from "../../open-sse/translator/concerns/usage.js";
 
 // Canonical convention (single source of truth for storage + cost):
 //   prompt_tokens             = total input INCLUDING cache read + cache creation
@@ -173,6 +173,72 @@ describe("Anthropic streaming usage (message_start carries cache, message_delta 
     expect(merged.prompt_tokens).toBe(100);
     expect(merged.cache_read_input_tokens).toBe(200);
     expect(merged.completion_tokens).toBe(50);
+  });
+});
+
+describe("cachedTokensFrom — one reader for every provider spelling", () => {
+  const cases = [
+    ["AI SDK v5 camelCase (commandcode)", { cachedInputTokens: 5248 }, 5248],
+    ["AI SDK v5 nested", { inputTokenDetails: { cacheReadTokens: 90 } }, 90],
+    ["camel cachedTokens (kiro/qoder)", { cachedTokens: 7 }, 7],
+    ["snake cached_tokens", { cached_tokens: 11 }, 11],
+    ["Claude cache_read_input_tokens", { cache_read_input_tokens: 200 }, 200],
+    ["Gemini cachedContentTokenCount", { cachedContentTokenCount: 120 }, 120],
+    ["DeepSeek raw prompt_cache_hit_tokens", { prompt_cache_hit_tokens: 999 }, 999],
+    ["Responses input_tokens_details", { input_tokens_details: { cached_tokens: 42 } }, 42],
+    ["OpenAI prompt_tokens_details", { prompt_tokens_details: { cached_tokens: 31 } }, 31],
+    ["no cache field at all", { prompt_tokens: 100, completion_tokens: 5 }, 0],
+    ["zero is zero, not a miss", { cachedInputTokens: 0 }, 0],
+    ["not an object", null, 0],
+  ];
+  for (const [name, raw, expected] of cases) {
+    it(name, () => {
+      expect(cachedTokensFrom(raw)).toBe(expected);
+    });
+  }
+});
+
+describe("CommandCode usage pass-through", () => {
+  // Raw AI SDK v5 usage captured live from api.commandcode.ai/alpha/generate:
+  // finish.totalUsage = {inputTokens, outputTokens, totalTokens, reasoningTokens,
+  // cachedInputTokens, inputTokenDetails:{noCacheTokens, cacheReadTokens}}.
+  // inputTokens is cache-inclusive; cache reads land in cachedInputTokens.
+  it("surfaces cachedInputTokens as cached_tokens (warm call)", () => {
+    const out = toOpenAIUsage(
+      { inputTokens: 5443, outputTokens: 16, totalTokens: 5459, reasoningTokens: 16, cachedInputTokens: 5248 },
+      "commandcode"
+    );
+    expect(out.prompt_tokens).toBe(5443);
+    expect(out.completion_tokens).toBe(16);
+    expect(out.total_tokens).toBe(5459);
+    expect(out.prompt_tokens_details.cached_tokens).toBe(5248);
+  });
+
+  it("reads the nested inputTokenDetails.cacheReadTokens form", () => {
+    const out = toOpenAIUsage(
+      { inputTokens: 100, outputTokens: 5, totalTokens: 105, inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: 90 } },
+      "commandcode"
+    );
+    expect(out.prompt_tokens_details.cached_tokens).toBe(90);
+  });
+
+  it("omits prompt_tokens_details on a cold call (cachedInputTokens: 0)", () => {
+    const out = toOpenAIUsage(
+      { inputTokens: 5443, outputTokens: 2, totalTokens: 5445, reasoningTokens: 0, cachedInputTokens: 0 },
+      "commandcode"
+    );
+    expect(out.prompt_tokens).toBe(5443);
+    expect(out.prompt_tokens_details).toBeUndefined();
+  });
+
+  it("canonicalizes without double-counting (cache-inclusive prompt)", () => {
+    const out = toOpenAIUsage(
+      { inputTokens: 5443, outputTokens: 16, totalTokens: 5459, cachedInputTokens: 5248 },
+      "commandcode"
+    );
+    const canon = canonicalizeUsage(out);
+    expect(canon.prompt_tokens).toBe(5443);
+    expect(canon.cached_tokens).toBe(5248);
   });
 });
 

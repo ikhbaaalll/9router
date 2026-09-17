@@ -15,17 +15,40 @@ export function buildUsage({ promptTokens, completionTokens, totalTokens, cached
 
 const n = (v) => (typeof v === "number" ? v : 0);
 
+/**
+ * Cache-read (cached input) tokens from any provider's raw usage object, in
+ * whatever spelling that provider ships. Every shape that reaches this module
+ * counts input tokens cache-INCLUSIVE, so the value is a subset already inside
+ * promptTokens — never fold it in. One reader for all providers: a new provider
+ * only adds a spelling here when its upstream invents one.
+ */
+export function cachedTokensFrom(raw) {
+  if (!raw || typeof raw !== "object") return 0;
+  return (
+    n(raw.cachedInputTokens) ||
+    n(raw.inputTokenDetails?.cacheReadTokens) ||
+    n(raw.cachedTokens) ||
+    n(raw.cached_tokens) ||
+    n(raw.cache_read_input_tokens) ||
+    n(raw.cachedContentTokenCount) ||
+    n(raw.prompt_cache_hit_tokens) ||
+    n(raw.input_tokens_details?.cached_tokens) ||
+    n(raw.prompt_tokens_details?.cached_tokens) ||
+    0
+  );
+}
+
 // Per-provider raw token field-map + math. Returns buildUsage() args (NOT the usage object).
 // Keeps each provider's exact semantics: claude/gemini fold cache+reasoning, others don't.
 const USAGE_EXTRACTORS = {
   claude(raw) {
     const input = n(raw.input_tokens), output = n(raw.output_tokens);
-    const cacheRead = n(raw.cache_read_input_tokens), cacheCreate = n(raw.cache_creation_input_tokens);
+    const cacheRead = cachedTokensFrom(raw), cacheCreate = n(raw.cache_creation_input_tokens);
     const prompt = input + cacheRead + cacheCreate;
     return { promptTokens: prompt, completionTokens: output, totalTokens: prompt + output, cachedTokens: cacheRead, cacheCreationTokens: cacheCreate };
   },
   gemini(raw) {
-    const cached = n(raw.cachedContentTokenCount);
+    const cached = cachedTokensFrom(raw);
     const prompt = n(raw.promptTokenCount);
     const thoughts = n(raw.thoughtsTokenCount);
     const total = n(raw.totalTokenCount);
@@ -39,11 +62,7 @@ const USAGE_EXTRACTORS = {
   },
   kiro(raw) {
     const input = n(raw.inputTokens), output = n(raw.outputTokens);
-    // ponytail: Amazon Q (Kiro upstream) does not expose cache fields today,
-    // but pass through any cache_read/cache_creation/cached_tokens if the
-    // event shape grows them later so cost tracking keeps working without
-    // a second pass.
-    const cached = n(raw.cache_read_input_tokens) || n(raw.cachedTokens) || n(raw.cached_tokens);
+    const cached = cachedTokensFrom(raw);
     const cacheCreation = n(raw.cache_creation_input_tokens);
     const out = { promptTokens: input, completionTokens: output, totalTokens: input + output };
     if (cached > 0) out.cachedTokens = cached;
@@ -57,7 +76,13 @@ const USAGE_EXTRACTORS = {
   commandcode(raw) {
     const input = n(raw.inputTokens), output = n(raw.outputTokens);
     const total = typeof raw.totalTokens === "number" ? raw.totalTokens : input + output;
-    return { promptTokens: input, completionTokens: output, totalTokens: total };
+    // AI SDK v5 usage from /alpha/generate: cache reads arrive as
+    // cachedInputTokens (nested form: inputTokenDetails.cacheReadTokens), and
+    // inputTokens is cache-inclusive (raw prompt_tokens_details.cached_tokens).
+    const cached = cachedTokensFrom(raw);
+    const out = { promptTokens: input, completionTokens: output, totalTokens: total };
+    if (cached > 0) out.cachedTokens = cached;
+    return out;
   },
 };
 
