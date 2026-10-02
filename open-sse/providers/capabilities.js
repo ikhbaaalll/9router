@@ -35,7 +35,9 @@
 // model spec); set `search` from vendor docs (Claude 4.x+, GPT-5.x/4o, Gemini
 // 2.0+, Grok, Perplexity). Verify with: curl -s https://models.dev/api.json
 
-import { comboStepTarget } from "@/shared/utils/comboSteps.js";
+// Relative, not "@/…": this module is also loaded outside the bundler (the MITM
+// child process and a few node-level test loads), where the "@/" alias is absent.
+import { comboStepTarget } from "../../src/shared/utils/comboSteps.js";
 import { matchPattern } from "./pricing.js";
 import { looksLikeVisionModel } from "./visionPatterns.js";
 
