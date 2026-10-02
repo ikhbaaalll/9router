@@ -600,7 +600,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "commandcode":
-      case "clinepass":
         if (data.message) {
           normalizedQuotas.push({
             name: "error",
