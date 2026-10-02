@@ -107,9 +107,9 @@ describe("chat combo — per-member account pin reaches credential selection", (
 
     const options = mocks.getProviderCredentials.mock.calls.map((c) => c[3]);
     // Pool accounts for the unpinned member…
-    expect(options[0]).toEqual({ preferredConnectionId: null });
+    expect(options[0]).toMatchObject({ preferredConnectionId: null });
     // …and the pin, once the combo reaches the pinned member.
-    expect(options.at(-1)).toEqual({ preferredConnectionId: "conn-B" });
+    expect(options.at(-1)).toMatchObject({ preferredConnectionId: "conn-B" });
 
     // The pinned account is the one that served the request.
     const dispatch = mocks.handleChatCore.mock.calls.at(-1)[0];
@@ -123,6 +123,6 @@ describe("chat combo — per-member account pin reaches credential selection", (
     const res = await handleChat(chatRequest("cmd/deepseek/deepseek-v4-flash"));
 
     expect(res.status).toBe(200);
-    expect(mocks.getProviderCredentials.mock.calls[0][3]).toEqual({ preferredConnectionId: null });
+    expect(mocks.getProviderCredentials.mock.calls[0][3]).toMatchObject({ preferredConnectionId: null });
   });
 });

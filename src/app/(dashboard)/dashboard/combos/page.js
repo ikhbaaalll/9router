@@ -7,7 +7,6 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { COMBO_STRATEGIES } from "@/shared/constants/comboStrategies.js";
 import { comboStepTarget, comboStepConnectionId } from "@/shared/utils/comboSteps.js";
-import { ComboBuilder } from "@/shared/components";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -44,12 +43,6 @@ function normalizeCapEntry(entry) {
   }
   return { ...EMPTY_CAP_ENTRY };
 }
-
-const STRATEGY_OPTIONS = [
-  { value: "fallback", label: "Fallback — try in order" },
-  { value: "round-robin", label: "Round Robin — rotate" },
-  { value: "fusion", label: "Fusion — panel + judge" },
-];
 
 export default function CombosPage() {
   const [combos, setCombos] = useState([]);
