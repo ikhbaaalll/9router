@@ -152,13 +152,15 @@ describe("opencode-go thinking-suffix guard (regression)", () => {
   it("does NOT route chat-only glm-5.2(max) to /messages on a claude-format request", async () => {
     const { result, runtimeTransport } = await route("glm-5.2(max)", "claude");
     expect(result.success).toBe(true);
-    expect(runtimeTransport).toBeNull(); // guard must block; falls back to chat/completions
+    // The guard blocks /messages and pins the endpoint the model DOES declare
+    // (glm-5.2 is chat-only) instead of leaving the choice to the provider default.
+    expect(runtimeTransport?.baseUrl).toBe(ENDPOINTS.openai);
   });
 
   it("does NOT route chat-only kimi-k2.6(max) to /responses on a responses-format request", async () => {
     const { result, runtimeTransport } = await route("kimi-k2.6(max)", "openai-responses");
     expect(result.success).toBe(true);
-    expect(runtimeTransport).toBeNull();
+    expect(runtimeTransport?.baseUrl).toBe(ENDPOINTS.openai);
   });
 
   it("still routes minimax-m3(max) + claude-format client to /messages", async () => {
@@ -170,6 +172,8 @@ describe("opencode-go thinking-suffix guard (regression)", () => {
   it("does NOT route minimax-m3(max) (no responses support) to /responses", async () => {
     const { result, runtimeTransport } = await route("minimax-m3(max)", "openai-responses");
     expect(result.success).toBe(true);
-    expect(runtimeTransport).toBeNull();
+    // minimax-m3 declares openai + claude; a responses client falls back to the
+    // first declared format — chat/completions, never /responses.
+    expect(runtimeTransport?.baseUrl).toBe(ENDPOINTS.openai);
   });
 });
