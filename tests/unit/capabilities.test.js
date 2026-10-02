@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
+import { getCapabilitiesForModel, aggregateComboCapabilities } from "../../open-sse/providers/capabilities.js";
 
 describe("getCapabilitiesForModel", () => {
 
@@ -248,5 +248,25 @@ describe("getCapabilitiesForModel — codebuddy-cn provider overrides", () => {
     const caps = getCapabilitiesForModel("unknown-provider", "mimo-v2.5");
     expect(caps.vision).toBe(true);
     expect(caps.thinkingFormat).toBe("deepseek");
+  });
+});
+
+describe("aggregateComboCapabilities", () => {
+  it("accepts pinned step objects, not just strings", () => {
+    const caps = aggregateComboCapabilities([
+      "codebuddy-cn/deepseek-v4-pro",
+      { model: "codebuddy-cn/minimax-m3", connectionId: "conn-1", label: "work" },
+    ], null, null);
+    expect(caps).not.toBeNull();
+    expect(caps.vision).toBe(true);
+  });
+
+  it("resolves a nested combo whose lookup holds step objects", () => {
+    const caps = aggregateComboCapabilities(
+      ["inner"],
+      { inner: [{ model: "codebuddy-cn/minimax-m3", connectionId: "c" }] },
+      null,
+    );
+    expect(caps.thinkingFormat).toBe("openai");
   });
 });

@@ -35,6 +35,7 @@
 // model spec); set `search` from vendor docs (Claude 4.x+, GPT-5.x/4o, Gemini
 // 2.0+, Grok, Perplexity). Verify with: curl -s https://models.dev/api.json
 
+import { comboStepTarget } from "@/shared/utils/comboSteps.js";
 import { matchPattern } from "./pricing.js";
 import { looksLikeVisionModel } from "./visionPatterns.js";
 
@@ -488,7 +489,10 @@ export const PATTERN_CAPABILITIES = [
  */
 export function aggregateComboCapabilities(comboModels, comboLookup = null, resolveCaps = null, _depth = 0) {
   if (!comboModels?.length || _depth > 6) return null;
-  const allCaps = comboModels.map((fullId) => {
+  const allCaps = comboModels.map((raw) => {
+    // A combo member may be a step object ({ model, connectionId, label }) — the fork
+    // stores pinned accounts that way. Aggregation works on the string form.
+    const fullId = typeof raw === "string" ? raw : comboStepTarget(raw);
     // Nested combo: bare name (no slash) that exists in the lookup — recurse
     if (!fullId.includes("/") && comboLookup?.[fullId]) {
       return aggregateComboCapabilities(comboLookup[fullId], comboLookup, resolveCaps, _depth + 1)
