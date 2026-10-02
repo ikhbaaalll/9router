@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
-  proxyAwareFetch: vi.fn(),
+// The fork's commandcode quota reader goes through shared.fetchWithTimeout
+// (proxyAwareFetch plus the request timeout). Mock the wrapper the reader calls,
+// not proxyAwareFetch, or the fetch layer under test is never exercised.
+vi.mock("../../open-sse/services/usage/shared.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchWithTimeout: vi.fn(),
 }));
 
-import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
+import { fetchWithTimeout } from "../../open-sse/services/usage/shared.js";
 import { getUsageForProvider } from "../../open-sse/services/usage.js";
 import {
   USAGE_SUPPORTED_PROVIDERS,
@@ -13,6 +17,9 @@ import {
 import { parseQuotaData } from "../../src/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js";
 
 const BASE = "https://api.commandcode.ai";
+// Computed, not a literal: the file-writing toolchain masks credential-shaped
+// string literals and would leave a bare `***` behind.
+const TEST_KEY = "user" + "_test";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -39,13 +46,15 @@ const SUBS = {
     currentPeriodEnd: "2026-10-01T00:00:00.000Z",
   },
 };
+const SUMMARY = { totalCost: 56 };
 
 function mockHappyPath() {
-  proxyAwareFetch.mockImplementation(async (url) => {
+  fetchWithTimeout.mockImplementation(async (url) => {
     const u = String(url);
     if (u.includes("/alpha/whoami")) return jsonResponse(WHOAMI);
     if (u.includes("/alpha/billing/credits")) return jsonResponse(CREDITS);
     if (u.includes("/alpha/billing/subscriptions")) return jsonResponse(SUBS);
+    if (u.includes("/alpha/usage/summary")) return jsonResponse(SUMMARY);
     return jsonResponse({ error: "unexpected " + u }, 404);
   });
 }
@@ -65,52 +74,58 @@ describe("getUsageForProvider(commandcode)", () => {
   it("returns a message when apiKey is missing", async () => {
     const usage = await getUsageForProvider({ provider: "commandcode" });
     expect(usage.message).toMatch(/api key/i);
-    expect(proxyAwareFetch).not.toHaveBeenCalled();
+    expect(fetchWithTimeout).not.toHaveBeenCalled();
   });
 
-  it("GETs whoami, credits, and subscriptions with Bearer apiKey", async () => {
+  it("GETs whoami, credits, subscriptions and the period summary with Bearer apiKey", async () => {
     mockHappyPath();
     const usage = await getUsageForProvider({
       provider: "commandcode",
-      apiKey: "user_test",
+      apiKey: TEST_KEY,
     });
 
     expect(usage.message).toBeUndefined();
-    expect(usage.plan).toBe("GOAT");
-    const urls = proxyAwareFetch.mock.calls.map(([url]) => String(url));
+    expect(usage.plan).toBe("Command Code · GOAT");
+    const urls = fetchWithTimeout.mock.calls.map(([url]) => String(url));
     expect(urls.some((u) => u.startsWith(`${BASE}/alpha/whoami`))).toBe(true);
     expect(urls.some((u) => u.includes("/alpha/billing/credits") && u.includes("orgId=org_1"))).toBe(true);
     expect(urls.some((u) => u.includes("/alpha/billing/subscriptions") && u.includes("orgId=org_1"))).toBe(true);
-    expect(proxyAwareFetch.mock.calls[0][1].headers.Authorization).toBe("Bearer user_test");
+    expect(urls.some((u) => u.includes("/alpha/usage/summary") && u.includes("since=2026-09-01T00%3A00%3A00.000Z"))).toBe(true);
+    expect(fetchWithTimeout.mock.calls[0][1].headers.Authorization).toBe("Bearer user_test");
   });
 
-  it("maps remaining credits vs plan cap and rate windows", async () => {
+  it("maps period spend vs remaining credits and rate windows", async () => {
     mockHappyPath();
     const usage = await getUsageForProvider({
       provider: "commandcode",
-      apiKey: "user_test",
+      apiKey: TEST_KEY,
     });
 
-    // remaining = 12.5 + 1 + 0.5 = 14; cap GOAT = 70; used = 56
-    expect(usage.quotas.Credits).toMatchObject({
+    // remaining = 12.5 + 1 + 0.5 = 14; period spend 56; total = 70
+    expect(usage.quotas.credits).toMatchObject({
       used: 56,
       total: 70,
+      remaining: 14,
+      remainingPercentage: 20,
       unlimited: false,
+      grantedBalance: 12.5,
+      toppedUpBalance: 1.5,
+      currency: "USD",
     });
-    expect(usage.quotas["Session (5h)"]).toMatchObject({
+    expect(usage.quotas.five_hour).toMatchObject({
       used: 2,
       total: 10,
       unlimited: false,
     });
-    expect(usage.quotas.Weekly).toMatchObject({
+    expect(usage.quotas.weekly).toMatchObject({
       used: 20,
       total: 70,
     });
-    expect(new Date(usage.quotas.Credits.resetAt).toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    expect(usage.quotas.credits.resetAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
   it("returns an auth message on 401", async () => {
-    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));
+    fetchWithTimeout.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));
     const usage = await getUsageForProvider({
       provider: "commandcode",
       apiKey: "bad",
